@@ -3,8 +3,22 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import datetime
 
-# --- CONFIG ---
+# --- CONFIG & CUSTOM CSS ---
 st.set_page_config(page_title="AV Field Log", page_icon="📱", layout="centered")
+
+# CSS to force Multiselect tags to be Yellow
+st.markdown("""
+<style>
+span[data-baseweb="tag"] {
+    background-color: #FFD700 !important;
+    color: black !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# --- SESSION STATE INITIALIZATION ---
+if 'current_tab' not in st.session_state:
+    st.session_state.current_tab = "🛠️ Setup"
 
 # --- GOOGLE SHEETS CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -13,44 +27,67 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 st.title("🎙️ AV Field Log")
 
 # 1. ROOM NAME INPUT
-# UI updated to "Room Name", backend uses "room_code" to maintain API stability
 raw_code = st.text_input("Enter Room Name") 
 room_code = raw_code.strip().upper()
 
 if room_code:
-    # --- TABS ARCHITECTURE ---
-    tab1, tab2, tab3 = st.tabs(["🛠️ Setup", "⚡ Live Event", "📝 Debrief"])
+    
+    # --- SMART INITIALIZATION LOGIC ---
+    try:
+        existing_data = conn.read(worksheet="logs", ttl="0s")
+    except:
+        existing_data = pd.DataFrame()
+        
+    room_constraints = ""
+    t_infra = False
+    t_ft = False
+    t_ori = False
+    t_lh = False
+    t_ph = False
+    
+    # Check if user manually triggered a clear slate
+    force_clear_key = f"clear_{room_code}"
+    if force_clear_key not in st.session_state:
+        st.session_state[force_clear_key] = False
+
+    if not existing_data.empty and 'RoomCode' in existing_data.columns and not st.session_state[force_clear_key]:
+        match = existing_data[existing_data['RoomCode'] == room_code]
+        if not match.empty:
+            last_row = match.iloc[-1]
+            # If the last event wasn't a DEBRIEF, load the active state
+            if last_row.get('Category', '') != 'DEBRIEF':
+                room_constraints = last_row.get('Constraints', '') if pd.notna(last_row.get('Constraints')) else ""
+                t_infra = last_row.get('InfrastructureStatus', '') == 'STABLE'
+                t_ft = last_row.get('FinalTouches', '') == 'YES'
+                t_ori = last_row.get('Orientation', '') == 'YES'
+                t_lh = last_row.get('EventLeadHandshake', '') == 'YES'
+                t_ph = last_row.get('PartnerHandshake', '') == 'YES'
+
+    # --- TAB NAVIGATION (Radio Menu workaround) ---
+    tabs = ["🛠️ Setup", "⚡ Live Event", "📝 Debrief"]
+    st.radio("Navigation", tabs, horizontal=True, label_visibility="collapsed", key="current_tab")
+    st.divider()
 
     # --- TAB 1: SETUP ---
-    with tab1:
-        st.info("Engineering constraints sync across all devices.")
+    if st.session_state.current_tab == "🛠️ Setup":
         
-        # Pull existing constraints to populate the field
-        try:
-            existing_data = conn.read(worksheet="logs", ttl="0s")
-            if not existing_data.empty and 'RoomCode' in existing_data.columns:
-                match = existing_data[existing_data['RoomCode'] == room_code]
-                room_constraints = match.iloc[-1]['Constraints'] if not match.empty else ""
-            else:
-                room_constraints = ""
-        except:
-            room_constraints = ""
-            existing_data = pd.DataFrame() # fallback
-
         safety_notes = st.text_area("Constraints", 
                                     value=room_constraints,
                                     placeholder="Type constraints here during prep...")
         
         col1, col2 = st.columns(2)
         with col1:
-            infra = st.toggle("Infrastructure Stable")
-            final_touches = st.toggle("Final Touches")
-            orientation = st.toggle("Orientation")
+            infra = st.toggle("Infrastructure Stable", value=t_infra)
+            final_touches = st.toggle("Final Touches", value=t_ft)
+            orientation = st.toggle("Orientation", value=t_ori)
         with col2:
-            handshake = st.toggle("Lead Handshake")
-            partner_handshake = st.toggle("Partner Handshake")
+            handshake = st.toggle("Lead Handshake", value=t_lh)
+            partner_handshake = st.toggle("Partner Handshake", value=t_ph)
 
-        if st.button("Sync Devices", use_container_width=True):
+        st.write("") # Spacing
+        if st.button("Launch Event", use_container_width=True, type="primary"):
+            st.session_state[force_clear_key] = False # Lock in the active state
+            
             new_entry = pd.DataFrame([{
                 "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "RoomCode": room_code,
@@ -69,23 +106,37 @@ if room_code:
             }])
             
             try:
-                df = conn.read(worksheet="logs", ttl="0s")
-                updated_df = pd.concat([df, new_entry], ignore_index=True).dropna(how='all')
+                if existing_data.empty:
+                    updated_df = new_entry
+                else:
+                    updated_df = pd.concat([existing_data, new_entry], ignore_index=True).dropna(how='all')
                 conn.update(worksheet="logs", data=updated_df)
-                st.success(f"Synced {room_code} to the cloud.")
+                
+                # Snap to Live Event tab
+                st.session_state.current_tab = "⚡ Live Event"
+                st.rerun()
             except Exception as e:
                 st.error(f"Sync Error: {e}")
+                
+        # Fail-safe to wipe ghost data if someone forgot to debrief
+        st.write("")
+        if st.button("Force Clear Setup (Wipe Slate)", use_container_width=True):
+            st.session_state[force_clear_key] = True
+            st.rerun()
 
     # --- TAB 2: LIVE EVENT ---
-    with tab2:
+    elif st.session_state.current_tab == "⚡ Live Event":
         def log_event(category):
+            # Fetch constraints so we append them to the log row
+            current_constraints = room_constraints if 'room_constraints' in locals() else ""
+            
             log_entry = pd.DataFrame([{
                 "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "RoomCode": room_code,
                 "Category": category,
                 "Note": "Action Button Pressed",
                 "InfrastructureStatus": "",
-                "Constraints": safety_notes,
+                "Constraints": current_constraints,
                 "EventLeadHandshake": "",
                 "FinalTouches": "",
                 "Orientation": "",
@@ -106,19 +157,22 @@ if room_code:
 
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("🔴 SENIOR LEADER OVERRIDE", use_container_width=True):
-                log_event("Senior Leader Override")
             if st.button("🟡 MISSED DEADLINE", use_container_width=True):
                 log_event("Missed Deadline")
+            st.write("") # Spacing for touch targets
+            if st.button("🔵 TECHNICAL EVENT", use_container_width=True):
+                log_event("Technical Event")
 
         with c2:
             if st.button("🟠 SCOPE CREEP", use_container_width=True):
                 log_event("Scope Creep")
-            if st.button("🔵 TECHNICAL EVENT", use_container_width=True):
-                log_event("Technical Event")
+            st.write("") # Spacing for touch targets
+            if st.button("🔴 LEADER OVERRIDE", use_container_width=True):
+                log_event("Leader Override")
 
     # --- TAB 3: DEBRIEF ---
-    with tab3:
+    elif st.session_state.current_tab == "📝 Debrief":
+        
         # 1. Fetch recent events to link notes to
         action_events = []
         try:
@@ -127,7 +181,7 @@ if room_code:
                 recent_logs = existing_data[
                     (existing_data['RoomCode'] == room_code) & 
                     (existing_data['Timestamp'].astype(str).str.contains(today_str)) &
-                    (existing_data['Category'].isin(["Senior Leader Override", "Missed Deadline", "Scope Creep", "Technical Event"]))
+                    (existing_data['Category'].isin(["Leader Override", "Missed Deadline", "Scope Creep", "Technical Event"]))
                 ]
                 for idx, row in recent_logs.iterrows():
                     short_time = str(row['Timestamp']).split(" ")[-1] 
@@ -166,7 +220,8 @@ if room_code:
             
         degraded_gear = st.text_input("Flag Degraded Gear", placeholder="e.g. Frayed 25' XLR")
 
-        if st.button("Submit Debrief", use_container_width=True):
+        st.write("")
+        if st.button("Complete Event", use_container_width=True, type="primary"):
             # Format Consumables
             consumables_str = ", ".join(consumable_data)
             
@@ -181,31 +236,4 @@ if room_code:
                 combined_notes.append(general_notes)
             
             final_general_str = "\n\n".join(combined_notes)
-
-            debrief_entry = pd.DataFrame([{
-                "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "RoomCode": room_code,
-                "Category": "DEBRIEF",
-                "Note": "Post-Event Breakdown",
-                "InfrastructureStatus": "",
-                "Constraints": safety_notes,
-                "EventLeadHandshake": "",
-                "FinalTouches": "",
-                "Orientation": "",
-                "PartnerHandshake": "",
-                "Linked_Event": linked_event_str,
-                "Debrief_General": final_general_str,
-                "Debrief_Consumables": consumables_str,
-                "Degraded_Gear": degraded_gear
-            }])
-            
-            try:
-                df = conn.read(worksheet="logs", ttl="0s")
-                updated_df = pd.concat([df, debrief_entry], ignore_index=True).dropna(how='all')
-                conn.update(worksheet="logs", data=updated_df)
-                st.success("Debrief and gear log saved successfully.")
-            except Exception as e:
-                st.error(f"Sync Error: {e}")
-
-else:
-    st.warning("Please enter a Room Name to begin logging.")
+            current_constraints = room_constraints if 'room_constraints'
