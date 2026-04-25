@@ -85,4 +85,175 @@ if room_code:
                 "PartnerHandshake": "YES" if partner_handshake else "NO",
                 "Linked_Event": "",
                 "Debrief_General": "",
-                "Debrief_Cons
+                "Debrief_Consumables": "",
+                "Degraded_Gear": ""
+            }])
+            
+            try:
+                if existing_data.empty:
+                    updated_df = new_entry
+                else:
+                    updated_df = pd.concat([existing_data, new_entry], ignore_index=True).dropna(how='all')
+                conn.update(worksheet="logs", data=updated_df)
+                
+                # Updated success message to instruct the user since auto-tabbing is removed
+                st.success(f"Event Launched! Data synced to cloud. Please switch to the Live Event tab.")
+            except Exception as e:
+                st.error(f"Sync Error: {e}")
+
+    # --- TAB 2: LIVE EVENT ---
+    with tab2:
+        def log_event(category):
+            # Fetch constraints so we append them to the log row
+            current_constraints = room_constraints if 'room_constraints' in locals() else ""
+            
+            log_entry = pd.DataFrame([{
+                "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "RoomCode": room_code,
+                "Category": category,
+                "Note": "Action Button Pressed",
+                "InfrastructureStatus": "",
+                "Constraints": current_constraints,
+                "EventLeadHandshake": "",
+                "FinalTouches": "",
+                "Orientation": "",
+                "PartnerHandshake": "",
+                "Linked_Event": "",
+                "Debrief_General": "",
+                "Debrief_Consumables": "",
+                "Degraded_Gear": ""
+            }])
+            
+            try:
+                df = conn.read(worksheet="logs", ttl="0s")
+                updated_df = pd.concat([df, log_entry], ignore_index=True).dropna(how='all')
+                conn.update(worksheet="logs", data=updated_df)
+                st.toast(f"Logged {category}")
+            except Exception as e:
+                st.error(f"Sync Error: {e}")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🟡 MISSED DEADLINE", use_container_width=True):
+                log_event("Missed Deadline")
+            st.write("") # Spacing for touch targets
+            if st.button("🔵 TECHNICAL EVENT", use_container_width=True):
+                log_event("Technical Event")
+
+        with c2:
+            if st.button("🟠 SCOPE CREEP", use_container_width=True):
+                log_event("Scope Creep")
+            st.write("") # Spacing for touch targets
+            if st.button("🔴 LEADER OVERRIDE", use_container_width=True):
+                log_event("Leader Override")
+
+    # --- TAB 3: DEBRIEF ---
+    with tab3:
+        # 1. Fetch recent events to link notes to
+        action_events = []
+        try:
+            if not existing_data.empty and 'RoomCode' in existing_data.columns and 'Timestamp' in existing_data.columns and 'Category' in existing_data.columns:
+                today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                recent_logs = existing_data[
+                    (existing_data['RoomCode'] == room_code) & 
+                    (existing_data['Timestamp'].astype(str).str.contains(today_str)) &
+                    (existing_data['Category'].isin(["Leader Override", "Missed Deadline", "Scope Creep", "Technical Event"]))
+                ]
+                for idx, row in recent_logs.iterrows():
+                    short_time = str(row['Timestamp']).split(" ")[-1] 
+                    action_events.append(f"{short_time} - {row['Category']}")
+        except:
+            pass
+
+        action_ref = st.selectbox("Link note to specific event (Optional)", ["None"] + action_events)
+        
+        event_note = ""
+        if action_ref != "None":
+            event_note = st.text_area("Event Context", placeholder=f"Notes regarding {action_ref}...")
+
+        # 2. General Notes
+        general_notes = st.text_area("General Debrief Notes", placeholder="Overall debrief information...")
+        
+        # 3. Gear & Consumables with Dynamic UI
+        st.write("**Logistics & Gear**")
+        consumables = st.multiselect("Consumables Used", ["Gaff Tape", "AA Batteries", "AAA Batteries"])
+        
+        consumable_data = []
+        
+        # Dynamic inputs based on selection
+        if "Gaff Tape" in consumables:
+            gaff_qty = st.text_input("Gaff Tape Quantity", placeholder="e.g. half roll")
+            if gaff_qty: 
+                consumable_data.append(f"Gaff Tape: {gaff_qty}")
+                
+        if "AA Batteries" in consumables:
+            aa_qty = st.number_input("AA Batteries", min_value=1, step=1)
+            consumable_data.append(f"AA Batteries: {aa_qty}")
+            
+        if "AAA Batteries" in consumables:
+            aaa_qty = st.number_input("AAA Batteries", min_value=1, step=1)
+            consumable_data.append(f"AAA Batteries: {aaa_qty}")
+            
+        degraded_gear = st.text_input("Flag Degraded Gear", placeholder="e.g. Frayed 25' XLR")
+
+        st.write("")
+        if st.button("Complete Event", use_container_width=True, type="primary"):
+            # Format Consumables
+            consumables_str = ", ".join(consumable_data)
+            
+            # Format Linked Event
+            linked_event_str = action_ref if action_ref != "None" else ""
+            
+            # Format General Notes (Combine event context + general notes with carriage returns for Excel)
+            combined_notes = []
+            if event_note:
+                combined_notes.append(f"Context for {linked_event_str}:\n{event_note}")
+            if general_notes:
+                combined_notes.append(general_notes)
+            
+            final_general_str = "\n\n".join(combined_notes)
+            current_constraints = room_constraints if 'room_constraints' in locals() else ""
+
+            debrief_entry = pd.DataFrame([{
+                "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "RoomCode": room_code,
+                "Category": "DEBRIEF",
+                "Note": "Post-Event Breakdown",
+                "InfrastructureStatus": "",
+                "Constraints": current_constraints,
+                "EventLeadHandshake": "",
+                "FinalTouches": "",
+                "Orientation": "",
+                "PartnerHandshake": "",
+                "Linked_Event": linked_event_str,
+                "Debrief_General": final_general_str,
+                "Debrief_Consumables": consumables_str,
+                "Degraded_Gear": degraded_gear
+            }])
+            
+            try:
+                df = conn.read(worksheet="logs", ttl="0s")
+                if df.empty:
+                    updated_df = debrief_entry
+                else:
+                    updated_df = pd.concat([df, debrief_entry], ignore_index=True).dropna(how='all')
+                conn.update(worksheet="logs", data=updated_df)
+                
+                # Reset UI state for a cold start
+                st.session_state[force_clear_key] = True 
+                
+                st.success("Event Complete! Data synced and room cleared.")
+                time.sleep(1.5)
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"Sync Error: {e}")
+
+    # --- FOOTER: TUCKED AWAY FORCE CLEAR ---
+    st.markdown("<br><br><br><br><br>", unsafe_allow_html=True) # Adds vertical padding to push it down
+    if st.button("force clear", type="tertiary"):
+        st.session_state[force_clear_key] = True
+        st.rerun()
+
+else:
+    st.warning("Please enter a Room Name to begin logging.")
