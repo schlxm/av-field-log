@@ -7,13 +7,12 @@ import datetime
 st.set_page_config(page_title="AV Field Log", page_icon="📱", layout="centered")
 
 # --- GOOGLE SHEETS CONNECTION ---
-# Connect using the secrets stored in Streamlit Cloud
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- APP UI ---
 st.title("🎙️ AV Field Log")
 
-# 1. ROOM CODE INPUT (Case Insensitive)
+# 1. ROOM CODE INPUT
 raw_code = st.text_input("Enter Room Code", placeholder="e.g., PARLOR, VISTA")
 room_code = raw_code.strip().upper()
 
@@ -22,10 +21,11 @@ if room_code:
     with st.expander(f"🛠️ Prep & Constraints: {room_code}", expanded=True):
         st.info("Engineering constraints sync across all devices.")
         
-        # Pull existing constraints for this room to populate the field
+        # Pull existing constraints to populate the field
         try:
             existing_data = conn.read(worksheet="logs", ttl="0s")
             if not existing_data.empty:
+                # Get the most recent constraints for this specific room
                 match = existing_data[existing_data['RoomCode'] == room_code]
                 room_constraints = match.iloc[-1]['Constraints'] if not match.empty else ""
             else:
@@ -54,16 +54,11 @@ if room_code:
                 "EventLeadHandshake": "YES" if handshake else "NO"
             }])
             
-            # The "Manual Append" Logic for maximum stability
-            try:
-                df = conn.read(worksheet="logs", ttl="0s")
-                # Filter out completely empty/NaN rows before appending
-                df = df.dropna(how='all')
-                updated_df = pd.concat([df, new_entry], ignore_index=True)
-                conn.update(worksheet="logs", data=updated_df)
-            except:
-                # If sheet is empty or failing to read, start fresh
-                conn.create(worksheet="logs", data=new_entry)
+            # The "Read-Append-Update" Method
+            # This avoids the 'UnsupportedOperation' error by not trying to 'create' anything
+            df = conn.read(worksheet="logs", ttl="0s")
+            updated_df = pd.concat([df, new_entry], ignore_index=True).dropna(how='all')
+            conn.update(worksheet="logs", data=updated_df)
                 
             st.success(f"Synced {room_code} to the cloud.")
 
@@ -85,15 +80,13 @@ if room_code:
             "EventLeadHandshake": ""
         }])
         
-        # Repeat the manual append logic for buttons
         try:
             df = conn.read(worksheet="logs", ttl="0s")
-            df = df.dropna(how='all')
-            updated_df = pd.concat([df, log_entry], ignore_index=True)
+            updated_df = pd.concat([df, log_entry], ignore_index=True).dropna(how='all')
             conn.update(worksheet="logs", data=updated_df)
             st.toast(f"Logged {category}")
         except Exception as e:
-            st.error(f"Failed to log: {e}")
+            st.error(f"Sync Error: {e}")
 
     with c1:
         if st.button("🔴 SENIOR LEADER OVERRIDE", use_container_width=True):
