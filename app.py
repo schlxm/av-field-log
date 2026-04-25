@@ -7,8 +7,7 @@ import datetime
 st.set_page_config(page_title="AV Field Log", page_icon="📱", layout="centered")
 
 # --- GOOGLE SHEETS CONNECTION ---
-conn = st.connection("gsheets", type=GSheetsConnection, spreadsheet="https://docs.google.com/spreadsheets/d/1_7LVcPjaT4V3jx7SiUsy9WRXQPDgrDvugieCsmvomRs/edit")
-
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 
 # --- APP UI ---
