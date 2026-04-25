@@ -51,7 +51,7 @@ if room_code:
                 "EventLeadHandshake": "YES" if handshake else "NO"
             }])
             # Append the new data to the sheet
-            conn.create(worksheet="logs", data=launch_entry)
+            conn.update(worksheet="logs", data=launch_entry)
             st.success(f"Successfully synced {room_code} to the cloud.")
 
     st.divider()
