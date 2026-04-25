@@ -9,17 +9,16 @@ st.set_page_config(page_title="AV Field Log", page_icon="📱", layout="centered
 # --- GOOGLE SHEETS CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-
 # --- APP UI ---
 st.title("🎙️ AV Field Log")
 
-# 1. ROOM CODE INPUT
-raw_code = st.text_input("Enter Room Code", placeholder="e.g., PARLOR, VISTA")
+# 1. ROOM NAME INPUT (UI updated, Backend variables maintained for API stability)
+raw_code = st.text_input("Enter Room Name") 
 room_code = raw_code.strip().upper()
 
 if room_code:
     # --- PHASE 1: PREP & NORMALIZATION ---
-    with st.expander(f"🛠️ Prep & Constraints: {room_code}", expanded=True):
+    with st.expander(f"🛠️ Setup: {room_code}", expanded=True):
         st.info("Engineering constraints sync across all devices.")
         
         # Pull existing constraints to populate the field
@@ -34,17 +33,23 @@ if room_code:
         except:
             room_constraints = ""
 
-        safety_notes = st.text_area("Engineering/Safety Constraints", 
+        # Renamed Text Area
+        safety_notes = st.text_area("Constraints", 
                                     value=room_constraints,
                                     placeholder="Type constraints here during prep...")
         
+        # Added new toggles and stacked them
         col1, col2 = st.columns(2)
         with col1:
             infra = st.toggle("Infrastructure Stable")
+            final_touches = st.toggle("Final Touches")
+            orientation = st.toggle("Orientation")
         with col2:
             handshake = st.toggle("Lead Handshake")
+            partner_handshake = st.toggle("Partner Handshake")
 
-        if st.button("Save Prep / Sync All Devices"):
+        # Renamed Sync Button
+        if st.button("Sync Devices"):
             new_entry = pd.DataFrame([{
                 "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "RoomCode": room_code,
@@ -52,11 +57,13 @@ if room_code:
                 "Note": "System Normalized",
                 "InfrastructureStatus": "STABLE" if infra else "PENDING",
                 "Constraints": safety_notes,
-                "EventLeadHandshake": "YES" if handshake else "NO"
+                "EventLeadHandshake": "YES" if handshake else "NO",
+                "FinalTouches": "YES" if final_touches else "NO",
+                "Orientation": "YES" if orientation else "NO",
+                "PartnerHandshake": "YES" if partner_handshake else "NO"
             }])
             
             # The "Read-Append-Update" Method
-            # This avoids the 'UnsupportedOperation' error by not trying to 'create' anything
             df = conn.read(worksheet="logs", ttl="0s")
             updated_df = pd.concat([df, new_entry], ignore_index=True).dropna(how='all')
             conn.update(worksheet="logs", data=updated_df)
@@ -71,6 +78,7 @@ if room_code:
     c1, c2 = st.columns(2)
     
     def log_event(category):
+        # Updated to include new toggle columns to prevent concat mismatch warnings
         log_entry = pd.DataFrame([{
             "Timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
             "RoomCode": room_code,
@@ -78,7 +86,10 @@ if room_code:
             "Note": "Action Button Pressed",
             "InfrastructureStatus": "",
             "Constraints": safety_notes,
-            "EventLeadHandshake": ""
+            "EventLeadHandshake": "",
+            "FinalTouches": "",
+            "Orientation": "",
+            "PartnerHandshake": ""
         }])
         
         try:
@@ -102,4 +113,4 @@ if room_code:
             log_event("Technical Event")
 
 else:
-    st.warning("Please enter a Room Code to sync data.")
+    st.warning("Please enter a Room Name to sync data.")
