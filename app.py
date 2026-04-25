@@ -7,26 +7,29 @@ import datetime
 st.set_page_config(page_title="AV Field Log", page_icon="📱", layout="centered")
 
 # --- GOOGLE SHEETS CONNECTION ---
-# This uses the secrets you already saved in the Streamlit Dashboard
+# Connect using the secrets stored in Streamlit Cloud
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- APP UI ---
 st.title("🎙️ AV Field Log")
 
-# 1. ROOM CODE INPUT (Case Insensitive & Stripped of Spaces)
+# 1. ROOM CODE INPUT (Case Insensitive)
 raw_code = st.text_input("Enter Room Code", placeholder="e.g., PARLOR, VISTA")
 room_code = raw_code.strip().upper()
 
 if room_code:
     # --- PHASE 1: PREP & NORMALIZATION ---
-    with st.expander(f"🛠️ Prep: {room_code}", expanded=True):
-        st.info("Engineering Constraints sync across all devices.")
+    with st.expander(f"🛠️ Prep & Constraints: {room_code}", expanded=True):
+        st.info("Engineering constraints sync across all devices.")
         
-        # We wrap this in a try/except in case the sheet is totally empty
+        # Pull existing constraints for this room to populate the field
         try:
-            existing_data = conn.read(worksheet="logs", ttl="0s") # ttl=0 means no cache, live data
-            match = existing_data[existing_data['RoomCode'] == room_code]
-            room_constraints = match.iloc[-1]['Constraints'] if not match.empty else ""
+            existing_data = conn.read(worksheet="logs", ttl="0s")
+            if not existing_data.empty:
+                match = existing_data[existing_data['RoomCode'] == room_code]
+                room_constraints = match.iloc[-1]['Constraints'] if not match.empty else ""
+            else:
+                room_constraints = ""
         except:
             room_constraints = ""
 
@@ -41,7 +44,7 @@ if room_code:
             handshake = st.toggle("Lead Handshake")
 
         if st.button("Save Prep / Sync All Devices"):
-            launch_entry = pd.DataFrame([{
+            new_entry = pd.DataFrame([{
                 "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "RoomCode": room_code,
                 "Category": "SYNC",
@@ -50,14 +53,24 @@ if room_code:
                 "Constraints": safety_notes,
                 "EventLeadHandshake": "YES" if handshake else "NO"
             }])
-            # Append the new data to the sheet
-            conn.write(worksheet="logs", data=launch_entry)
-            st.success(f"Successfully synced {room_code} to the cloud.")
+            
+            # The "Manual Append" Logic for maximum stability
+            try:
+                df = conn.read(worksheet="logs", ttl="0s")
+                # Filter out completely empty/NaN rows before appending
+                df = df.dropna(how='all')
+                updated_df = pd.concat([df, new_entry], ignore_index=True)
+                conn.update(worksheet="logs", data=updated_df)
+            except:
+                # If sheet is empty or failing to read, start fresh
+                conn.create(worksheet="logs", data=new_entry)
+                
+            st.success(f"Synced {room_code} to the cloud.")
 
     st.divider()
 
-    # --- PHASE 2: LIVE LOG (THE TRUMP CARD) ---
-    st.subheader("⚡ Live Action Buttons")
+    # --- PHASE 2: LIVE ACTION BUTTONS ---
+    st.subheader("⚡ Live Action Log")
     
     c1, c2 = st.columns(2)
     
@@ -66,13 +79,21 @@ if room_code:
             "Timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
             "RoomCode": room_code,
             "Category": category,
-            "Note": "Logged via Action Button",
+            "Note": "Action Button Pressed",
             "InfrastructureStatus": "",
             "Constraints": safety_notes,
             "EventLeadHandshake": ""
         }])
-        conn.create(worksheet="logs", data=log_entry)
-        st.toast(f"Logged {category} to Sheet")
+        
+        # Repeat the manual append logic for buttons
+        try:
+            df = conn.read(worksheet="logs", ttl="0s")
+            df = df.dropna(how='all')
+            updated_df = pd.concat([df, log_entry], ignore_index=True)
+            conn.update(worksheet="logs", data=updated_df)
+            st.toast(f"Logged {category}")
+        except Exception as e:
+            st.error(f"Failed to log: {e}")
 
     with c1:
         if st.button("🔴 SENIOR LEADER OVERRIDE", use_container_width=True):
@@ -87,4 +108,5 @@ if room_code:
             log_event("Technical Event")
 
 else:
-    st.warning("Enter a Room Code to sync with your contractor.")
+    st.warning("Please enter a Room Code to s
+    ync data.")
