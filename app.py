@@ -108,5 +108,4 @@ if room_code:
             log_event("Technical Event")
 
 else:
-    st.warning("Please enter a Room Code to s
-    ync data.")
+    st.warning("Please enter a Room Code to sync data.")
