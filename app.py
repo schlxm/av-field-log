@@ -236,4 +236,45 @@ if room_code:
                 combined_notes.append(general_notes)
             
             final_general_str = "\n\n".join(combined_notes)
-            current_constraints = room_constraints if 'room_constraints'
+            current_constraints = room_constraints if 'room_constraints' in locals() else ""
+
+            debrief_entry = pd.DataFrame([{
+                "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "RoomCode": room_code,
+                "Category": "DEBRIEF",
+                "Note": "Post-Event Breakdown",
+                "InfrastructureStatus": "",
+                "Constraints": current_constraints,
+                "EventLeadHandshake": "",
+                "FinalTouches": "",
+                "Orientation": "",
+                "PartnerHandshake": "",
+                "Linked_Event": linked_event_str,
+                "Debrief_General": final_general_str,
+                "Debrief_Consumables": consumables_str,
+                "Degraded_Gear": degraded_gear
+            }])
+            
+            try:
+                df = conn.read(worksheet="logs", ttl="0s")
+                if df.empty:
+                    updated_df = debrief_entry
+                else:
+                    updated_df = pd.concat([df, debrief_entry], ignore_index=True).dropna(how='all')
+                conn.update(worksheet="logs", data=updated_df)
+                
+                # Reset UI state for a cold start
+                st.session_state[force_clear_key] = True 
+                st.session_state.current_tab = "🛠️ Setup"
+                
+                st.success("Event Complete! Data synced and room cleared.")
+                # Slight delay so they can read the success message before it redraws
+                import time
+                time.sleep(1.5)
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"Sync Error: {e}")
+
+else:
+    st.warning("Please enter a Room Name to begin logging.")
